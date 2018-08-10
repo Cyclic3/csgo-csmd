@@ -1,18 +1,25 @@
 #!/usr/bin/env python3
 
+# Requires -condebug and -conclearlog parameters in launch options!
+
 from configparser import ConfigParser
 from argparse import ArgumentParser, ArgumentTypeError, RawTextHelpFormatter
 from bz2 import decompress
 from pathlib import Path
-from re import compile, DOTALL
 from shutil import copyfileobj
 from sys import stderr, exit
 from typing import Any, Union
 from urllib import request
 from urllib.error import HTTPError
+import os
+import re
 
-__version__ = "0.2.0"
+__version__ = "1.0.0"
 
+# Whitelist of directories where servers may download to
+allowed_dirs = ['materials', 'sound', 'maps', 'models']
+# Allowed characters in patch components
+allowed_chars = re.compile('^[a-zA-Z0-9\[\]_.-]+$')
 
 class ANSIColors:
     purple = '\033[95m'
@@ -38,20 +45,6 @@ class HTPPErrorHandler:
 
 class VerifyCLASyntax:
     @staticmethod
-    def condump(string: str) -> str:
-        if string == "latest":
-            # Will be checked later
-            return string
-        else:
-            # condumpXXX.txt
-            if not compile('(condump)(\\d)(\\d)(\\d)(\\.)(txt)',
-                           DOTALL).search(string):
-                raise ArgumentTypeError("{0}Accepted syntax: condumpXXX.txt{1}"
-                                        .format(ANSIColors.red, ANSIColors.end))
-            else:
-                return string
-
-    @staticmethod
     def path(path: Union[str, Path]) -> Union[str, Path]:
         if isinstance(path, Path):
             if not path.exists():
@@ -76,9 +69,7 @@ class CSMD:
         self.csgo_path = None
         self.condump = None
         self.config_path = None
-        self.ip_port = None
-        self.base_url = None
-        self.materials = []
+        self.servers = []
 
         self.config_path = Path.home().joinpath(".config/csmd/csmd.conf")
         if not self.config_path.exists():
@@ -87,7 +78,7 @@ class CSMD:
 
     @staticmethod
     def show_header() -> None:
-        print("{0}{1}CS:GO Community Server Materials Downloader v{2}{3}\n"
+        print("{0}{1}CS:GO Community Server Materials Downloader v{2}{3}"
               .format(ANSIColors.bold, ANSIColors.purple,
                       __version__, ANSIColors.end))
 
@@ -107,9 +98,6 @@ class CSMD:
         config['path']['csgo_path'] = str(Path.home().joinpath(
             ".local/share/Steam/steamapps/common/"
             "Counter-Strike Global Offensive/csgo"))
-        config['log'] = {}
-        config['log']['type'] = "condump"  # TODO: log_file
-        config['log']['condump'] = "latest"
 
         with self.config_path.open('w') as f:
             config.write(f)
@@ -124,7 +112,6 @@ class CSMD:
             exit(1)
         try:
             self.csgo_path = Path(parser['path']['csgo_path'])
-            self.condump = parser['log']['condump']
         except KeyError:
             print("{0}Incorrect csmd.conf{1}"
                   .format(ANSIColors.red, ANSIColors.end))
@@ -145,11 +132,6 @@ class CSMD:
             help="Path to CS:GO home folder (default:\n"
                  "/home/$USER/.local/share/Steam/steamapps/common/Counter-Strike Global Offensive/csgo)",
                  type=VerifyCLASyntax.path)
-        parser.add_argument(
-            "--condump",
-            help="Console dump to use, can be either 'latest'\n"
-                 "or 'condumpXXX.txt' where X is a 0-9 digit",
-            type=VerifyCLASyntax.condump)
         return parser
 
     def parse_args(self, args: Any) -> None:
@@ -162,114 +144,120 @@ class CSMD:
         else:
             VerifyCLASyntax.path(self.csgo_path)
 
-        if args.condump:
-            self.condump = args.condump
-
-        if self.condump == "latest":
-            try:
-                # Use latest console dump
-                self.condump = max(self.csgo_path.glob("condump*.txt"))
-            except ValueError:
-                print("{0}condumpXXX.txt not found in '{1}'{2}."
-                      .format(ANSIColors.red, self.csgo_path, ANSIColors.end))
-                print("{0}Have you executed 'condump' in CS:GO console?{1}"
-                      .format(ANSIColors.red, ANSIColors.end))
-                exit(1)
-        else:
-            VerifyCLASyntax.condump(self.condump)
-            self.condump = self.csgo_path.joinpath(self.condump)
-            VerifyCLASyntax.path(self.condump)
+        self.condump = self.csgo_path.joinpath('console.log')
 
     def parse_console_log(self) -> None:
         with self.condump.open() as file:
             lines = file.readlines()
 
-            addresses = [_ for _ in lines if _.startswith("Connected to")]
-            if not addresses:
-                raise IndexError("{0}Server IP not found{1}"
-                                 .format(ANSIColors.red, ANSIColors.end))
+            for line in lines:
+                if line.startswith("Connected to"):
+                    currentserver = {
+                        'ip_port': line.split()[-1],
+                        'materials' : []
+                        }
+                    self.servers.append(currentserver)
+                    full_url = ''
 
-            self.ip_port = addresses[0].split()[-1]
-            print("{0}Server: {1}{2}"
-                  .format(ANSIColors.blue, self.ip_port, ANSIColors.end))
+                if line.startswith("Downloading"):
+                    full_url = line.split()[-1]
 
-            full_urls = [_ for _ in lines if _.startswith("Downloading")]
-            if not full_urls:
-                raise IndexError("{0}Download URL not found{1}"
-                                 .format(ANSIColors.red, ANSIColors.end))
+                if line.startswith("Aborting download of"):
+                    rpath = line.split()[-1]
+                    i = 0
+                    try:
+                        i = full_url.index(rpath)
+                    except ValueError:
+                        print("{0}{1}Relative path not found in full URL!{2}"
+                              .format(ANSIColors.bold, ANSIColors.red, ANSIColors.end))
+                        exit(1)
+                    currentserver['base_url'] = full_url[0:i]
+                    currentserver['materials'].append(rpath);
 
-            full_url = full_urls[0].split()[-1]
+                if line.startswith("Discarding"):
+                    currentserver['materials'].append(line.split()[-1])
 
-            rpaths = [_ for _ in lines if _.startswith("Aborting download of")]
-            if not rpaths:
-                raise IndexError("{0}'Aborted' relative path not found{1}"
-                                 .format(ANSIColors.red, ANSIColors.end))
+    def check_material_path(self, path: str) -> None:
+        parts = path.split('/')
 
-            rpath = rpaths[0].split()[-1]
-
-            i = 0
-            try:
-                i = full_url.index(rpath)
-            except ValueError:
-                print("{0}{1}Relative path not found in full URL!{2}"
-                      .format(ANSIColors.bold, ANSIColors.red, ANSIColors.end))
+        for part in parts:
+            part = part.strip()
+            # "Empty part" check catches absolute paths (starting with /)
+            if part == '':
+                print("{0}{1}Path {2} suspicious (empty part){3}".format(
+                    ANSIColors.bold, ANSIColors.red, path, ANSIColors.end))
+                exit(1)
+            # ".." not allowed at all in part components (directory traversal)
+            if part.find('..') != -1:
+                print("{0}{1}Path {2} suspicious (dot-dot in part){3}".format(
+                    ANSIColors.bold, ANSIColors.red, path, ANSIColors.end))
+                exit(1)
+            # Just to be sure, some "allowed characters" check
+            if not allowed_chars.match(part):
+                print("{0}{1}Path {2} suspicious (invalid character){3}".format(
+                    ANSIColors.bold, ANSIColors.red, path, ANSIColors.end))
                 exit(1)
 
-            self.base_url = full_url[0:i]
-            print("{0}Base URL: {1}{2}\n"
-                  .format(ANSIColors.blue, self.base_url, ANSIColors.end))
+        if not parts[0] in allowed_dirs:
+            print("{0}{1}Directory {2} not on whitelist{3}".format(
+                ANSIColors.bold, ANSIColors.red, parts[0], ANSIColors.end))
+            exit(1)
 
-            # first material is in the "Aborting" line
-            self.materials.append(rpath)
-            materials = [_.split() for _ in lines if _.startswith("Discarding")]
-            if not materials:
-                raise IndexError("{0}Discarded materials not found{1}"
-                                 .format(ANSIColors.red, ANSIColors.end))
-
-            self.materials.extend([_[-1] for _ in materials])
 
     def download_materials(self) -> None:
-        for material in self.materials:
-            print("{0}{1}Requesting {2}{3}".format(
-                ANSIColors.bold, ANSIColors.purple, material, ANSIColors.end))
-
-            url = self.base_url + material
-            fpath = self.csgo_path.joinpath(material)
-
-            # Since we don't download archives and decompress
-            # on-the-fly, no *.bz2 files will be present and
-            # therefore we check for with_suffix(""), too
-            if fpath.exists() or fpath.with_suffix("").exists():
+        for server in self.servers:
+            # Skip servers without download requirement
+            if (len(server['materials']) == 0):
                 continue
-            else:
-                # mkdir -p
-                fpath.parents[0].mkdir(parents=True, exist_ok=True)
 
-            # Decompressing on-the-fly, thus with_suffix("")
-            if fpath.suffix == ".bz2":
-                try:
-                    with request.urlopen(url) as response, \
-                            fpath.with_suffix("").open('wb') as f:
-                        print("{0}{1} Decompressing bzip2{3}"
-                              .format(ANSIColors.bold, ANSIColors.blue,
-                                      material, ANSIColors.end))
-                        f.write(decompress(response.read()))
-                except HTTPError as err:
-                    HTPPErrorHandler(err).handle()
-                    # We know that we ignore 404 and raise
-                    # everything else, so it's safe to continue
+            print("\n{0}Server: {1}{2}"
+                  .format(ANSIColors.blue, server['ip_port'], ANSIColors.end))
+            print("{0}Base URL: {1}{2}\n"
+                  .format(ANSIColors.blue, server['base_url'], ANSIColors.end))
+
+            for material in server['materials']:
+                print("{0}{1}Requesting {2}{3}".format(
+                    ANSIColors.bold, ANSIColors.purple, material, ANSIColors.end))
+
+                self.check_material_path(material)
+
+                url = server['base_url'] + material
+                fpath = self.csgo_path.joinpath(material)
+
+                # Since we don't download archives and decompress
+                # on-the-fly, no *.bz2 files will be present and
+                # therefore we check for with_suffix(""), too
+                if fpath.exists() or fpath.with_suffix("").exists():
                     continue
-            else:
-                try:
-                    with request.urlopen(url) as response, \
-                            fpath.open('wb') as f:
-                        # Use shutil to write response on-the-fly
-                        copyfileobj(response, f)
-                except HTTPError as err:
-                    HTPPErrorHandler(err).handle()
-                    # We know that we ignore 404 and raise
-                    # everything else, so it's safe to continue
-                    continue
+                else:
+                    # mkdir -p
+                    fpath.parents[0].mkdir(parents=True, exist_ok=True)
+
+                # Decompressing on-the-fly, thus with_suffix("")
+                if fpath.suffix == ".bz2":
+                    try:
+                        with request.urlopen(url) as response, \
+                             fpath.with_suffix("").open('wb') as f:
+                            print("{0}{1} Decompressing bzip2{3}"
+                                  .format(ANSIColors.bold, ANSIColors.blue,
+                                          material, ANSIColors.end))
+                            f.write(decompress(response.read()))
+                    except HTTPError as err:
+                        HTPPErrorHandler(err).handle()
+                        # We know that we ignore 404 and raise
+                        # everything else, so it's safe to continue
+                        continue
+                else:
+                    try:
+                        with request.urlopen(url) as response, \
+                                fpath.open('wb') as f:
+                            # Use shutil to write response on-the-fly
+                            copyfileobj(response, f)
+                    except HTTPError as err:
+                        HTPPErrorHandler(err).handle()
+                        # We know that we ignore 404 and raise
+                        # everything else, so it's safe to continue
+                        continue
 
 
 if __name__ == '__main__':
@@ -283,6 +271,3 @@ if __name__ == '__main__':
 
     print("\n{0}{1}Success!{2}"
           .format(ANSIColors.bold, ANSIColors.blue, ANSIColors.end))
-    print("{0}{1} connect {2}{3}"
-          .format(ANSIColors.bold, ANSIColors.green,
-                  csmd.ip_port, ANSIColors.end))
