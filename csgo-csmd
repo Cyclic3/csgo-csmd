@@ -224,6 +224,17 @@ class CSMD:
                 url = server['base_url'] + material
                 fpath = self.csgo_path.joinpath(material)
 
+                # Create request to with proper User-Agent and Referer.
+                # Probably allows to bypass some server-side filtering.
+                req = request.Request(
+                    url,
+                    data = None,
+                    headers = {
+                        'User-Agent': 'Half-Life 2',
+                        'Referer': 'hl2://' + server['ip_port']
+                    }
+                )
+
                 # Since we don't download archives and decompress
                 # on-the-fly, no *.bz2 files will be present and
                 # therefore we check for with_suffix(""), too
@@ -236,7 +247,7 @@ class CSMD:
                 # Decompressing on-the-fly, thus with_suffix("")
                 if fpath.suffix == ".bz2":
                     try:
-                        with request.urlopen(url) as response, \
+                        with request.urlopen(req) as response, \
                              fpath.with_suffix("").open('wb') as f:
                             print("{0}{1} Decompressing bzip2{3}"
                                   .format(ANSIColors.bold, ANSIColors.blue,
@@ -249,7 +260,7 @@ class CSMD:
                         continue
                 else:
                     try:
-                        with request.urlopen(url) as response, \
+                        with request.urlopen(req) as response, \
                                 fpath.open('wb') as f:
                             # Use shutil to write response on-the-fly
                             copyfileobj(response, f)
