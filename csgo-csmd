@@ -18,8 +18,8 @@ __version__ = "1.0.0"
 
 # Whitelist of directories where servers may download to
 allowed_dirs = ['materials', 'sound', 'maps', 'models', 'particles']
-# Allowed characters in patch components
-allowed_chars = re.compile('^[a-zA-Z0-9\[\]_.-]+$')
+# Allowed characters in path components
+allowed_chars = re.compile('^[a-zA-Z0-9\[\]_. -]+$')
 
 class ANSIColors:
     purple = '\033[95m'
@@ -159,11 +159,11 @@ class CSMD:
                     self.servers.append(currentserver)
                     full_url = ''
 
-                if line.startswith("Downloading"):
-                    full_url = line.split()[-1]
+                if line.startswith("Downloading "):
+                    full_url = line[12:].strip()
 
-                if line.startswith("Aborting download of"):
-                    rpath = line.split()[-1]
+                if line.startswith("Aborting download of "):
+                    rpath = line[21:].strip()
                     i = 0
                     try:
                         i = full_url.index(rpath)
@@ -174,8 +174,8 @@ class CSMD:
                     currentserver['base_url'] = full_url[0:i]
                     currentserver['materials'].append(rpath);
 
-                if line.startswith("Discarding queued download of"):
-                    currentserver['materials'].append(line.split()[-1])
+                if line.startswith("Discarding queued download of "):
+                    currentserver['materials'].append(line[30:].strip())
 
     def check_material_path(self, path: str) -> None:
         parts = path.split('/')
@@ -222,6 +222,8 @@ class CSMD:
                 self.check_material_path(material)
 
                 url = server['base_url'] + material
+                # Very primitive "URL escape" (just handle space for now)
+                url = url.replace(' ', '%20')
                 fpath = self.csgo_path.joinpath(material)
 
                 # Create request to with proper User-Agent and Referer.
