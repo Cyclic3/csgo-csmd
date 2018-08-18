@@ -17,7 +17,7 @@ import re
 __version__ = "1.0.0"
 
 # Whitelist of directories where servers may download to
-allowed_dirs = ['materials', 'sound', 'maps', 'models']
+allowed_dirs = ['materials', 'sound', 'maps', 'models', 'particles']
 # Allowed characters in patch components
 allowed_chars = re.compile('^[a-zA-Z0-9\[\]_.-]+$')
 
