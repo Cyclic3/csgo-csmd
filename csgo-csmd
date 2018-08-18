@@ -251,6 +251,15 @@ class CSMD:
                     try:
                         with request.urlopen(req) as response, \
                              fpath.with_suffix("").open('wb') as f:
+
+                            # Some servers deliver the "uncompressed file" if
+                            # the .bz2 is requested and just tell us via
+                            # header. Handle this case and abort download.
+                            # The "non-bz2" file is handled later anyway.
+                            if 'Content-Disposition' in response.headers:
+                                if response.headers['Content-Disposition'].find('.bz2') == -1:
+                                    continue
+
                             print("{0}{1} Decompressing bzip2{3}"
                                   .format(ANSIColors.bold, ANSIColors.blue,
                                           material, ANSIColors.end))
