@@ -20,6 +20,9 @@ __version__ = "1.0.0"
 allowed_dirs = ['materials', 'sound', 'maps', 'models', 'particles']
 # Allowed characters in path components
 allowed_chars = re.compile('^[a-zA-Z0-9\[\]_. -]+$')
+# List of file extensions where we create zero-size files in case the server
+# doesn't have the file.
+allow_spoof_file = ['.nav', '.mp3']
 
 class ANSIColors:
     purple = '\033[95m'
@@ -203,6 +206,12 @@ class CSMD:
                 ANSIColors.bold, ANSIColors.red, parts[0], ANSIColors.end))
             exit(1)
 
+    def spoof_path(self, path: str) -> None:
+        filename, extension = os.path.splitext(path)
+        if extension in allow_spoof_file:
+            print("{0}{1}Creating zero byte file {2}{3}".format(
+                ANSIColors.bold, ANSIColors.green, path, ANSIColors.end))
+            open(self.csgo_path.joinpath(path), 'a').close()
 
     def download_materials(self) -> None:
         for server in self.servers:
@@ -277,6 +286,7 @@ class CSMD:
                             copyfileobj(response, f)
                     except HTTPError as err:
                         HTPPErrorHandler(err).handle()
+                        self.spoof_path(material)
                         # We know that we ignore 404 and raise
                         # everything else, so it's safe to continue
                         continue
