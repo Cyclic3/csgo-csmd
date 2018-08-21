@@ -13,7 +13,7 @@ The script requires Python 3.
 Since the script must not be run as root (as it will lock the downloaded files under root), execute this in a terminal exactly as written out as a regular user (i.e. not root)(this assumes `sudo` is configured correctly):
 
 ```
-sudo curl -o /usr/local/bin/csgo-csmd https://raw.githubusercontent.com/light2yellow/csgo-csmd/master/csgo-csmd
+sudo curl -o /usr/local/bin/csgo-csmd https://raw.githubusercontent.com/M-Reimer/csgo-csmd/master/csgo-csmd
 sudo chown $USER:$USER /usr/local/bin/csgo-csmd
 chmod +x /usr/local/bin/csgo-csmd
 ```
