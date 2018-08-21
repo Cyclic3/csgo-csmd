@@ -14,8 +14,7 @@ Since the script must not be run as root (as it will lock the downloaded files u
 
 ```
 sudo curl -o /usr/local/bin/csgo-csmd https://raw.githubusercontent.com/M-Reimer/csgo-csmd/master/csgo-csmd
-sudo chown $USER:$USER /usr/local/bin/csgo-csmd
-chmod +x /usr/local/bin/csgo-csmd
+sudo chmod +x /usr/local/bin/csgo-csmd
 ```
 
 Now configure your "Launch Options" for CS:GO to contain -condebug and -conclearlog
