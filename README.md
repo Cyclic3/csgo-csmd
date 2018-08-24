@@ -65,6 +65,12 @@ use_fifo = false
 This means that files, once downloaded, do not have to be checked each time you want to connect to a map.
 It also means you do not have to tab out of csgo to load new maps.
 
+Once enabled for the first time (see Configuration above), just start it up before you launch CS:GO. 
+After the first launch, it will be able to read the log file even after startup.
+
+To use, simply start csmd, and follow the normal usage steps 1 - 3, 
+wait for the console beep (and/or the success message from csmd), and type `retry` in the CS:GO console.
+
 Please be aware that this is *highly* experimental, and therefore may not work as expected.
 
 ## Bugs and feature requests
