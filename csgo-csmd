@@ -11,7 +11,7 @@ from sys import stderr, exit
 from typing import Any, Union
 from urllib import request
 from urllib.error import HTTPError
-import os
+import os, stat
 import re
 
 __version__ = "1.0.0"
@@ -33,6 +33,8 @@ class ANSIColors:
     bold = '\033[1m'
     end = '\033[0m'
 
+def console_beep():
+    print('\a')
 
 class HTPPErrorHandler:
     def __init__(self, error: HTTPError) -> None:
@@ -72,6 +74,7 @@ class CSMD:
         self.csgo_path = None
         self.condump = None
         self.config_path = None
+        self.use_fifo = False
         self.servers = []
 
         self.config_path = Path.home().joinpath(".config/csmd/csmd.conf")
@@ -102,8 +105,32 @@ class CSMD:
             ".local/share/Steam/steamapps/common/"
             "Counter-Strike Global Offensive/csgo"))
 
+        config['log'] = {}
+        config['log']['use_fifo'] = False
+
         with self.config_path.open('w') as f:
             config.write(f)
+
+    def create_fifo(self) -> None:
+        # TODO: check if fifo is opened, so we don't delete it from underneath csgo
+
+        # Check to see if the console file is a fifo.
+        # If it is not delete it
+        if not stat.S_ISFIFO(os.stat(self.condump).st_mode):
+            os.unlink(self.condump)
+
+        if not self.condump.exists():
+            print("{0}{1}Having to create fifo. If CS:GO is open, you will need to run the following command: {3}"
+                   .format(ANSIColors.bold, ANSIColors.yellow, ANSIColors.end))
+
+            print('con_logfile "{0}"'
+                  .format(self.condump))
+
+            print('')
+
+            # Create the fifo
+            os.mkfifo(self.condump)
+
 
     def parse_config(self) -> None:
         parser = ConfigParser()
@@ -119,6 +146,8 @@ class CSMD:
             print("{0}Incorrect csmd.conf{1}"
                   .format(ANSIColors.red, ANSIColors.end))
             exit(1)
+        # Check to see if named pipes are requested (default: false)
+        self.use_fifo = parser['log'].getboolean('use_fifo', False)
 
     @staticmethod
     def setup_args() -> ArgumentParser:
@@ -148,37 +177,6 @@ class CSMD:
             VerifyCLASyntax.path(self.csgo_path)
 
         self.condump = self.csgo_path.joinpath('console.log')
-
-    def parse_console_log(self) -> None:
-        with self.condump.open() as file:
-            lines = file.readlines()
-
-            for line in lines:
-                if line.startswith("Connected to"):
-                    currentserver = {
-                        'ip_port': line.split()[-1],
-                        'materials' : []
-                        }
-                    self.servers.append(currentserver)
-                    full_url = ''
-
-                if line.startswith("Downloading "):
-                    full_url = line[12:].strip()
-
-                if line.startswith("Aborting download of "):
-                    rpath = line[21:].strip()
-                    i = 0
-                    try:
-                        i = full_url.index(rpath)
-                    except ValueError:
-                        print("{0}{1}Relative path not found in full URL!{2}"
-                              .format(ANSIColors.bold, ANSIColors.red, ANSIColors.end))
-                        exit(1)
-                    currentserver['base_url'] = full_url[0:i]
-                    currentserver['materials'].append(rpath);
-
-                if line.startswith("Discarding queued download of "):
-                    currentserver['materials'].append(line[30:].strip())
 
     def check_material_path(self, path: str) -> None:
         parts = path.split('/')
@@ -213,24 +211,24 @@ class CSMD:
                 ANSIColors.bold, ANSIColors.green, path, ANSIColors.end))
             open(self.csgo_path.joinpath(path), 'a').close()
 
-    def download_materials(self) -> None:
-        for server in self.servers:
+    def download_one_material(self, material: str, ep: str, base_url: str) -> None:
+#        for server in self.servers:
             # Skip servers without download requirement
-            if (len(server['materials']) == 0):
-                continue
+#            if (len(server['materials']) == 0):
+#                continue
 
-            print("\n{0}Server: {1}{2}"
-                  .format(ANSIColors.blue, server['ip_port'], ANSIColors.end))
-            print("{0}Base URL: {1}{2}\n"
-                  .format(ANSIColors.blue, server['base_url'], ANSIColors.end))
+#            print("\n{0}Server: {1}{2}"
+#                  .format(ANSIColors.blue, server['ip_port'], ANSIColors.end))
+#            print("{0}Base URL: {1}{2}\n"
+#                  .format(ANSIColors.blue, server['base_url'], ANSIColors.end))
 
-            for material in server['materials']:
+#            for material in server['materials']:
                 print("{0}{1}Requesting {2}{3}".format(
                     ANSIColors.bold, ANSIColors.purple, material, ANSIColors.end))
 
                 self.check_material_path(material)
 
-                url = server['base_url'] + material
+                url = base_url + material
                 # Very primitive "URL escape" (just handle space for now)
                 url = url.replace(' ', '%20')
                 fpath = self.csgo_path.joinpath(material)
@@ -242,7 +240,7 @@ class CSMD:
                     data = None,
                     headers = {
                         'User-Agent': 'Half-Life 2',
-                        'Referer': 'hl2://' + server['ip_port']
+                        'Referer': 'hl2://' + ep
                     }
                 )
 
@@ -250,7 +248,7 @@ class CSMD:
                 # on-the-fly, no *.bz2 files will be present and
                 # therefore we check for with_suffix(""), too
                 if fpath.exists() or fpath.with_suffix("").exists():
-                    continue
+                    return
                 else:
                     # mkdir -p
                     fpath.parents[0].mkdir(parents=True, exist_ok=True)
@@ -267,7 +265,7 @@ class CSMD:
                             # The "non-bz2" file is handled later anyway.
                             if 'Content-Disposition' in response.headers:
                                 if response.headers['Content-Disposition'].find('.bz2') == -1:
-                                    continue
+                                    return
 
                             print("{0}{1} Decompressing bzip2{3}"
                                   .format(ANSIColors.bold, ANSIColors.blue,
@@ -277,7 +275,7 @@ class CSMD:
                         HTPPErrorHandler(err).handle()
                         # We know that we ignore 404 and raise
                         # everything else, so it's safe to continue
-                        continue
+                        return
                 else:
                     try:
                         with request.urlopen(req) as response, \
@@ -289,7 +287,67 @@ class CSMD:
                         self.spoof_path(material)
                         # We know that we ignore 404 and raise
                         # everything else, so it's safe to continue
-                        continue
+                        return
+
+    # This is now the caller, so that we do not have to reach an EOF before downloading
+    def parse_console_log(self) -> None:
+
+        # Create the fifo if required
+        if (self.use_fifo):
+            self.create_fifo()
+
+        # Set this to None to catch errors
+        current_server_ep = None
+        current_server_url = None
+        current_server_base_url = None
+
+        all_loaded = True
+
+        with self.condump.open() as file:
+            # We need to read line by line for fifo compatibility
+            for line in file:
+                if line.startswith("Connected to"):
+                    current_server_ep = line.split()[-1]
+
+                elif line.startswith("Downloading "):
+                    current_server_url = line[12:].strip()
+
+                elif line.startswith("Aborting download of "):
+                    # Set this after we start downloading,
+                    # so we don't get annoying beeps all the time
+                    all_loaded = False
+
+                    rpath = line[21:].strip()
+                    i = 0
+                    try:
+                        i = current_server_url.index(rpath)
+                    except ValueError:
+                        print("{0}{1}Relative path not found in full URL!{2}"
+                              .format(ANSIColors.bold, ANSIColors.red, ANSIColors.end))
+                        exit(1)
+                    current_server_base_url = current_server_url[0:i]
+                    try:
+                        self.download_one_material(rpath, current_server_ep, current_server_base_url)
+                    except TypeError:
+                        print("{0}{1}Unable to determine server information{2}"
+                              .format(ANSIColors.bold, ANSIColors.red, ANSIColors.end))
+                        exit(1)
+
+                elif line.startswith("Discarding queued download of "):
+                    rpath = line[30:].strip()
+                    try:
+                        self.download_one_material(rpath, current_server_ep, current_server_base_url)
+                    except TypeError:
+                        print("{0}{1}Unable to determine server information{2}"
+                              .format(ANSIColors.bold, ANSIColors.red, ANSIColors.end))
+                        exit(1)
+
+                elif line.startswith("ChangeGameUIState") and not all_loaded:
+                    console_beep()
+                    all_loaded = True
+                    print("\n{0}{1}Success!{2}"
+                          .format(ANSIColors.bold, ANSIColors.blue, ANSIColors.end))
+
 
 
 if __name__ == '__main__':
@@ -299,7 +357,4 @@ if __name__ == '__main__':
     csmd = CSMD()
     csmd.parse_args(CSMD.setup_args().parse_args())
     csmd.parse_console_log()
-    csmd.download_materials()
 
-    print("\n{0}{1}Success!{2}"
-          .format(ANSIColors.bold, ANSIColors.blue, ANSIColors.end))

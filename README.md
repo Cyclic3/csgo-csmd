@@ -52,9 +52,20 @@ CSMD provides a config in INI format (spaces between words are allowed). The def
 ```ini
 [path]
 csgo_path = /home/$USER/.local/share/Steam/steamapps/common/Counter-Strike Global Offensive/csgo
+
+[log]
+use_fifo = false
 ```
 
 * `csgo_path` can be anything `--csgo-path` accepts (see above)
+* `use_fifo` turns on an experimental new feature that makes downloading simpler and faster.
+
+### `use_fifo`
+`use_fifo` uses a named pipe to allow csmd to read console output as it occurs.
+This means that files, once downloaded, do not have to be checked each time you want to connect to a map.
+It also means you do not have to switch of of csgo to load new maps.
+
+Please be aware that this is *highly* experimental, and therefore may not work as expected.
 
 ## Bugs and feature requests
 
