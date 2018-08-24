@@ -111,26 +111,34 @@ class CSMD:
         with self.config_path.open('w') as f:
             config.write(f)
 
-    def create_fifo(self) -> None:
-        # TODO: check if fifo is opened, so we don't delete it from underneath csgo
-
+    def handle_fifo(self) -> None:
         # Check to see if the console file is a fifo.
-        # If it is not delete it
-        if not stat.S_ISFIFO(os.stat(self.condump).st_mode):
-            os.unlink(self.condump)
+        condump_exists = self.condump.exists()
+        if condump_exists:
+            condump_currently_fifo = stat.S_ISFIFO(os.stat(self.condump).st_mode)
+        else:
+            condump_currently_fifo = False
 
-        if not self.condump.exists():
-            print("{0}{1}Having to create fifo. If CS:GO is open, you will need to run the following command: {3}"
-                   .format(ANSIColors.bold, ANSIColors.yellow, ANSIColors.end))
+        if self.use_fifo:
+            if condump_exists and not condump_currently_fifo:
+                os.unlink(self.condump)
 
-            print('con_logfile "{0}"'
-                  .format(self.condump))
+            if not self.condump.exists():
+                print("{0}{1}Creating fifo. If CS:GO is open, you will need to run the following command: {3}"
+                      .format(ANSIColors.bold, ANSIColors.yellow, ANSIColors.end))
 
-            print('')
+                print('con_logfile "{0}"'
+                      .format(self.condump))
 
-            # Create the fifo
-            os.mkfifo(self.condump)
+                print('')
 
+                # Create the fifo
+                os.mkfifo(self.condump)
+        else:
+            if condump_currently_fifo:
+                print("{0}{1}Removing fifo. If CS:GO is open, you will need to run the following command: {3}"
+                      .format(ANSIColors.bold, ANSIColors.yellow, ANSIColors.end))
+                os.unlink(self.condump)
 
     def parse_config(self) -> None:
         parser = ConfigParser()
@@ -212,89 +220,77 @@ class CSMD:
             open(self.csgo_path.joinpath(path), 'a').close()
 
     def download_one_material(self, material: str, ep: str, base_url: str) -> None:
-#        for server in self.servers:
-            # Skip servers without download requirement
-#            if (len(server['materials']) == 0):
-#                continue
+        print("{0}{1}Requesting {2}{3}".format(
+            ANSIColors.bold, ANSIColors.purple, material, ANSIColors.end))
 
-#            print("\n{0}Server: {1}{2}"
-#                  .format(ANSIColors.blue, server['ip_port'], ANSIColors.end))
-#            print("{0}Base URL: {1}{2}\n"
-#                  .format(ANSIColors.blue, server['base_url'], ANSIColors.end))
+        self.check_material_path(material)
 
-#            for material in server['materials']:
-                print("{0}{1}Requesting {2}{3}".format(
-                    ANSIColors.bold, ANSIColors.purple, material, ANSIColors.end))
+        url = base_url + material
+        # Very primitive "URL escape" (just handle space for now)
+        url = url.replace(' ', '%20')
+        fpath = self.csgo_path.joinpath(material)
 
-                self.check_material_path(material)
+        # Create request to with proper User-Agent and Referer.
+        # Probably allows to bypass some server-side filtering.
+        req = request.Request(
+            url,
+            data = None,
+            headers = {
+                'User-Agent': 'Half-Life 2',
+                'Referer': 'hl2://' + ep
+            }
+        )
 
-                url = base_url + material
-                # Very primitive "URL escape" (just handle space for now)
-                url = url.replace(' ', '%20')
-                fpath = self.csgo_path.joinpath(material)
+        # Since we don't download archives and decompress
+        # on-the-fly, no *.bz2 files will be present and
+        # therefore we check for with_suffix(""), too
+        if fpath.exists() or fpath.with_suffix("").exists():
+            return
+        else:
+            # mkdir -p
+            fpath.parents[0].mkdir(parents=True, exist_ok=True)
 
-                # Create request to with proper User-Agent and Referer.
-                # Probably allows to bypass some server-side filtering.
-                req = request.Request(
-                    url,
-                    data = None,
-                    headers = {
-                        'User-Agent': 'Half-Life 2',
-                        'Referer': 'hl2://' + ep
-                    }
-                )
+        # Decompressing on-the-fly, thus with_suffix("")
+        if fpath.suffix == ".bz2":
+            try:
+                with request.urlopen(req) as response, \
+                     fpath.with_suffix("").open('wb') as f:
 
-                # Since we don't download archives and decompress
-                # on-the-fly, no *.bz2 files will be present and
-                # therefore we check for with_suffix(""), too
-                if fpath.exists() or fpath.with_suffix("").exists():
-                    return
-                else:
-                    # mkdir -p
-                    fpath.parents[0].mkdir(parents=True, exist_ok=True)
+                    # Some servers deliver the "uncompressed file" if
+                    # the .bz2 is requested and just tell us via
+                    # header. Handle this case and abort download.
+                    # The "non-bz2" file is handled later anyway.
+                    if 'Content-Disposition' in response.headers:
+                        if response.headers['Content-Disposition'].find('.bz2') == -1:
+                            return
 
-                # Decompressing on-the-fly, thus with_suffix("")
-                if fpath.suffix == ".bz2":
-                    try:
-                        with request.urlopen(req) as response, \
-                             fpath.with_suffix("").open('wb') as f:
-
-                            # Some servers deliver the "uncompressed file" if
-                            # the .bz2 is requested and just tell us via
-                            # header. Handle this case and abort download.
-                            # The "non-bz2" file is handled later anyway.
-                            if 'Content-Disposition' in response.headers:
-                                if response.headers['Content-Disposition'].find('.bz2') == -1:
-                                    return
-
-                            print("{0}{1} Decompressing bzip2{3}"
-                                  .format(ANSIColors.bold, ANSIColors.blue,
-                                          material, ANSIColors.end))
-                            f.write(decompress(response.read()))
-                    except HTTPError as err:
-                        HTPPErrorHandler(err).handle()
-                        # We know that we ignore 404 and raise
-                        # everything else, so it's safe to continue
-                        return
-                else:
-                    try:
-                        with request.urlopen(req) as response, \
-                                fpath.open('wb') as f:
-                            # Use shutil to write response on-the-fly
-                            copyfileobj(response, f)
-                    except HTTPError as err:
-                        HTPPErrorHandler(err).handle()
-                        self.spoof_path(material)
-                        # We know that we ignore 404 and raise
-                        # everything else, so it's safe to continue
-                        return
+                    print("{0}{1} Decompressing bzip2{3}"
+                          .format(ANSIColors.bold, ANSIColors.blue,
+                                  material, ANSIColors.end))
+                    f.write(decompress(response.read()))
+            except HTTPError as err:
+                HTPPErrorHandler(err).handle()
+                # We know that we ignore 404 and raise
+                # everything else, so it's safe to continue
+                return
+        else:
+            try:
+                with request.urlopen(req) as response, \
+                        fpath.open('wb') as f:
+                    # Use shutil to write response on-the-fly
+                    copyfileobj(response, f)
+            except HTTPError as err:
+                HTPPErrorHandler(err).handle()
+                self.spoof_path(material)
+                # We know that we ignore 404 and raise
+                # everything else, so it's safe to continue
+                return
 
     # This is now the caller, so that we do not have to reach an EOF before downloading
     def parse_console_log(self) -> None:
 
         # Create the fifo if required
-        if (self.use_fifo):
-            self.create_fifo()
+        self.handle_fifo()
 
         # Set this to None to catch errors
         current_server_ep = None
