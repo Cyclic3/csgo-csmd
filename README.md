@@ -63,7 +63,7 @@ use_fifo = false
 ### `use_fifo`
 `use_fifo` uses a named pipe to allow csmd to read console output as it occurs.
 This means that files, once downloaded, do not have to be checked each time you want to connect to a map.
-It also means you do not have to switch of of csgo to load new maps.
+It also means you do not have to tab out of csgo to load new maps.
 
 Please be aware that this is *highly* experimental, and therefore may not work as expected.
 
